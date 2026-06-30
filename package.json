@@ -1,0 +1,49 @@
+{
+  "name": "pdf-evidence-ai",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --webpack",
+    "build": "next build --webpack",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "pdf",
+    "rag",
+    "nextjs",
+    "gemini"
+  ],
+  "license": "MIT",
+  "description": "",
+  "dependencies": {
+    "@google/genai": "^2.1.0",
+    "@napi-rs/canvas": "^1.0.0",
+    "@neondatabase/serverless": "^1.1.0",
+    "@vercel/blob": "^2.4.0",
+    "katex": "^0.16.45",
+    "lucide-react": "^1.14.0",
+    "next": "^16.2.6",
+    "next-auth": "^4.24.14",
+    "pdfjs-dist": "^4.10.38",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "react-markdown": "^10.1.0",
+    "rehype-katex": "^7.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.7.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "eslint": "^9.39.4",
+    "eslint-config-next": "^16.2.6",
+    "postcss": "8.5.10",
+    "typescript": "^6.0.3"
+  },
+  "overrides": {
+    "postcss": "8.5.10"
+  }
+}
