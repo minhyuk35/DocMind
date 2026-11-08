@@ -1,8 +1,10 @@
 import { getServerSession } from "next-auth";
-import { redirect } from "next/navigation";
 import { authOptions } from "@/auth";
+import Landing from "@/components/Landing";
+import "./landing.css";
 
+// Public landing page; signed-in users see a "go to chat" button instead of Google sign-in.
 export default async function RootPage() {
   const session = await getServerSession(authOptions);
-  redirect(session ? "/chat" : "/login");
+  return <Landing signedIn={Boolean(session)} />;
 }
