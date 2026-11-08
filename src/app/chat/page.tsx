@@ -1,16 +1,30 @@
 "use client";
 
+import { upload } from "@vercel/blob/client";
 import { Loader2, Upload } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useRef, useState, type ChangeEvent, type DragEvent } from "react";
 import Sidebar from "@/components/Sidebar";
+import { MAX_PDF_BYTES, uploadPathFor } from "@/lib/upload";
 
 type UploadResponse = {
   sessionId?: string;
   error?: string;
   warning?: string;
 };
+
+// Vercel answers oversized or failed requests with plain text, so never assume JSON.
+async function readJson(res: Response): Promise<UploadResponse> {
+  const text = await res.text();
+  try {
+    return JSON.parse(text) as UploadResponse;
+  } catch {
+    if (res.status === 413) return { error: "파일이 너무 커서 서버가 받지 못했습니다." };
+    if (res.status === 504) return { error: "분석 시간이 너무 오래 걸렸습니다. 더 작은 PDF로 다시 시도해 주세요." };
+    return { error: `서버 응답을 읽지 못했습니다. (HTTP ${res.status})` };
+  }
+}
 
 export default function NewChatPage() {
   const { data: authSession } = useSession();
@@ -25,15 +39,34 @@ export default function NewChatPage() {
       setStatus("PDF 파일만 업로드할 수 있습니다.");
       return;
     }
+    if (file.size > MAX_PDF_BYTES) {
+      setStatus("200MB 이하 PDF만 업로드할 수 있습니다.");
+      return;
+    }
+    const userId = authSession?.user?.id;
+    if (!userId) {
+      setStatus("로그인이 필요합니다.");
+      return;
+    }
     setIsUploading(true);
-    setStatus("PDF 분석 중...");
-
-    const formData = new FormData();
-    formData.append("file", file);
+    setStatus("PDF 올리는 중...");
 
     try {
-      const res = await fetch("/api/analyze-pdf", { method: "POST", body: formData });
-      const data = (await res.json()) as UploadResponse;
+      const blob = await upload(uploadPathFor(userId, file.name), file, {
+        access: "public",
+        handleUploadUrl: "/api/blob-upload",
+        contentType: "application/pdf",
+        multipart: file.size > 8 * 1024 * 1024,
+        onUploadProgress: ({ percentage }) => setStatus(`PDF 올리는 중... ${Math.round(percentage)}%`),
+      });
+
+      setStatus("PDF 분석 중...");
+      const res = await fetch("/api/analyze-pdf", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: blob.url, fileName: file.name }),
+      });
+      const data = await readJson(res);
       if (!res.ok || data.error) throw new Error(data.error ?? "업로드에 실패했습니다.");
       router.push(`/chat/${data.sessionId}`);
     } catch (err) {

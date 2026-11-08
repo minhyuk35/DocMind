@@ -1,4 +1,3 @@
-import { put } from "@vercel/blob";
 import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 import { authOptions } from "@/auth";
@@ -8,12 +7,15 @@ import { safeErrorMessage } from "@/lib/errors";
 import { extractPdfDocument } from "@/lib/pdf";
 import { renderAndUploadAllPages } from "@/lib/pdf-render";
 import { pdfEvidenceStore, summarizeDocument } from "@/lib/pdf-store";
+import { isOwnUploadUrl, MAX_PDF_BYTES } from "@/lib/upload";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
-const MAX_FILE_SIZE = 200 * 1024 * 1024;
+type AnalyzeRequest = { url?: unknown; fileName?: unknown };
 
+// The PDF itself is uploaded from the browser to Vercel Blob (see /api/blob-upload);
+// this route receives only the Blob URL, because Vercel rejects request bodies over 4.5MB.
 export async function POST(request: Request) {
   try {
     const authSession = await getServerSession(authOptions);
@@ -22,30 +24,39 @@ export async function POST(request: Request) {
     }
     const userId = authSession.user.id;
 
-    const formData = await request.formData();
-    const file = formData.get("file");
+    const body = (await request.json().catch(() => ({}))) as AnalyzeRequest;
+    const pdfUrl = typeof body.url === "string" ? body.url : "";
+    const fileName = typeof body.fileName === "string" && body.fileName.trim() ? body.fileName.trim().slice(0, 200) : "document.pdf";
 
-    if (!(file instanceof File)) {
-      return NextResponse.json({ error: "PDF 파일을 찾지 못했습니다." }, { status: 400 });
+    if (!pdfUrl || !isOwnUploadUrl(pdfUrl, userId)) {
+      return NextResponse.json({ error: "업로드한 PDF를 찾지 못했습니다. 다시 올려 주세요." }, { status: 400 });
     }
-    if (!file.name.toLowerCase().endsWith(".pdf")) {
+    if (!fileName.toLowerCase().endsWith(".pdf")) {
       return NextResponse.json({ error: "PDF 파일만 업로드할 수 있습니다." }, { status: 400 });
     }
-    if (file.size > MAX_FILE_SIZE) {
+
+    const pdfResponse = await fetch(pdfUrl, { cache: "no-store" });
+    if (!pdfResponse.ok) {
+      return NextResponse.json({ error: "업로드한 PDF를 불러오지 못했습니다. 다시 올려 주세요." }, { status: 502 });
+    }
+    const declaredSize = Number(pdfResponse.headers.get("content-length") ?? 0);
+    if (declaredSize > MAX_PDF_BYTES) {
+      return NextResponse.json({ error: "200MB 이하 PDF만 업로드할 수 있습니다." }, { status: 413 });
+    }
+    const buffer = Buffer.from(await pdfResponse.arrayBuffer());
+    if (buffer.byteLength > MAX_PDF_BYTES) {
       return NextResponse.json({ error: "200MB 이하 PDF만 업로드할 수 있습니다." }, { status: 413 });
     }
 
-    const buffer = Buffer.from(await file.arrayBuffer());
     const sessionId = crypto.randomUUID();
     let warning: string | undefined;
 
-    const [geminiFile, document, blob] = await Promise.all([
-      uploadPdfToGemini(buffer, file.name).catch((error) => {
+    const [geminiFile, document] = await Promise.all([
+      uploadPdfToGemini(buffer, fileName).catch((error) => {
         warning = `Gemini 파일 업로드 실패: ${safeErrorMessage(error, "Gemini 파일 업로드에 실패했습니다.")}`;
         return undefined;
       }),
-      extractPdfDocument(buffer, file.name),
-      put(`pdfs/${sessionId}/${file.name}`, buffer, { access: "public", multipart: true }),
+      extractPdfDocument(buffer, fileName),
     ]);
 
     document.id = sessionId;
@@ -78,13 +89,13 @@ export async function POST(request: Request) {
     await createSession({
       id: sessionId,
       userId,
-      filename: file.name,
+      filename: fileName,
       pageCount: document.pageCount,
       totalCharacters: document.totalCharacters,
       geminiFileUri: document.geminiFileUri,
       geminiFileName: document.geminiFileName,
       geminiFileMimeType: document.geminiFileMimeType,
-      pdfUrl: blob.url,
+      pdfUrl,
     });
 
     await savePdfPages(
